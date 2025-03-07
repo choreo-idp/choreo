@@ -50,7 +50,7 @@ These abstractions simplify the development and deployment process, allowing dev
 
 For more details about the abstractions, refer to [Choreo Resource Kinds](docs/README.md).
 
-## Quick Start Guide
+## Installation
 This guide will help users set up the necessary prerequisites, download and install the Choreo Helm chart, verify the setup and deploy the sample application.
 ### _Prerequisites_
 - [Helm](https://helm.sh/docs/intro/install/) version v3.15+
@@ -68,46 +68,46 @@ helm install choreo oci://choreov3testacr.azurecr.io/choreo-v3/choreo \
 --version 0.1.0 --namespace "choreo-system" --create-namespace --timeout 30m
 ```
 
+## Quick Start Guide
+
+In this section, we provide a quick start guide to install Choreo using our toolbox (dev container) and deploy a sample Web Application component.
+
+### Prerequisites
+
+You need to have docker installed on your local machine. We recommend having docker engine [version 26.0.0+](https://docs.docker.com/engine/release-notes/26.0/#2600).
+
 ### Install from Scratch Using a kind(k8s in docker) Cluster
 
 This section guides you through setting up a [kind](https://kind.sigs.k8s.io/) cluster and installing Cilium and Choreo from scratch.
 
-#### 1. Install Kind
+#### 1. Start the toolbox
 
-Make sure you have installed [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), version v0.25.0+.
-
-> We use Kind to quickly create a Kubernetes cluster, primarily for testing purposes.
-
-To verify the installation:
+To start the dev container, run the following command.
 
 ```shell
-kind version
+docker run --rm -it --name choreo-quick-idp --pull always \
+-v /var/run/docker.sock:/var/run/docker.sock \
+-v choreo-state:/state \
+-v tf-state:/app/terraform \
+--network bridge \
+-p 8443:8443 \
+choreo.azurecr.io/choreo-quick-getting-started:latest
 ```
 
-#### 2. Create a Kind cluster
+#### 2. Install
+
+Run the following command within the dev container to install choreo.
 
 ```shell
-kind create cluster --config=install/kind/kind-config.yaml
+./install.sh
 ```
 
-#### 3. Install Cilium
+#### 3. Check the installation status
 
-The following helm chart provided by us installs Cilium with minimal configurations required for Choreo.
-
-```shell
-helm install cilium oci://choreov3testacr.azurecr.io/choreo-v3/cilium  --version 0.1.0 --namespace "choreo-system" --create-namespace --timeout 30m
-```
-
-#### 4. Install Choreo
+Run the following command to check the installation status.
 
 ```shell
-helm install choreo oci://choreov3testacr.azurecr.io/choreo-v3/choreo  --version 0.1.0 --namespace "choreo-system" --create-namespace --timeout 30m
-```
-
-#### 5. Verify installation status
-
-```shell
-sh install/check-status.sh
+./check-status.sh
 ```
 
 You should see the following output if the installation is successful.
@@ -131,6 +131,9 @@ internal_gateway          ✅ ready
 Overall Status: ✅ READY
 🎉 Choreo has been successfully installed and is ready to use! 🚀
 ```
+
+Now you have choreo installed and running on your docker environment and `choreoctl` installed into your dev container. 
+You can proceed to the next steps to see how you can deploy your first component in Choreo.
 
 ### Deploy your first component in choreo
 
@@ -215,73 +218,7 @@ webapp   https://default-org-default-project-hello-world-ea384b50-development.ch
 ```
 #### 7. Test the deployed WebApp
 
-You have two options to test your WebApp component.
-
-1. Option 1: Access the WebApp by exposing the external-gateway as a LoadBalancer to your host machine.
-2. Option 2: port-forward from your host machine to external-gateway service.
-
-##### Option 1: Expose the external-gateway as a LoadBalancer
-
-The following steps will guide you through exposing the external-gateway service as a LoadBalancer to your host machine.
-In this you will be using the [cloud-provider-kind](https://github.com/kubernetes-sigs/cloud-provider-kind/tree/main) to
-expose the LoadBalancer service(external-gateway) to your host machine.
-
-First, [install](https://github.com/kubernetes-sigs/cloud-provider-kind/tree/main?tab=readme-ov-file#install) the cloud-provider-kind tool to your host machine.
-
-Then, run this tool in sudo mode, and it will automatically assign LoadBalancer IP to your external-gateway service.
-
-```shell
-# run this command in a separate terminal and keep it running.
-$ sudo $(which cloud-provider-kind)
-```
-
-Then you could find the load balancer IP for your external-gateway service as follows.
-
-```shell
-# to find the external-gateway service name
-$ kubectl get svc -n choreo-system | grep gateway-external
-```
-
-```shell
-# to find the LoadBalancer-IP
-# <name> should be replaced with the service name found in the previous step.
-$ kubectl get svc/<name> -n choreo-system -o=jsonpath='{.status.loadBalancer.ingress[0].ip}'
-```
-
-Then add this IP to your /etc/hosts file as follows.
-
-```text
-<LoadBalancer-IP> react-starter-development.choreo.localhost
-```
-
-Now you can access the WebApp using following URL.
-
-https://default-org-default-project-hello-world-ea384b50-development.choreo.localhost
-
-##### Option 2: Port-forward the external-gateway service
-
-The following steps will guide you through port-forwarding from your host machine to the external-gateway service.
-
-First, find the external-gateway service using the following command.
-
-```shell
-kubectl get svc -n choreo-system | grep gateway-external
-```
-
-Then port-forward the service to your host machine using the following command.
-
-```shell
-# <name> should be replaces with the service name found in the previous step.
-kubectl port-forward svc/<name> -n choreo-system 443:443
-```
-
-Then add the following entry to your /etc/hosts file.
-
-```
-127.0.0.1 default-org-default-project-hello-world-ea384b50-development.choreo.localhost
-```
-
-Now you can access the WebApp using the following URL.
+Now you can access the WebApp from the host machine using the following URL.
 
 https://default-org-default-project-hello-world-ea384b50-development.choreo.localhost
 
