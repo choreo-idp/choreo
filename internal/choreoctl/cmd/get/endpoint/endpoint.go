@@ -117,8 +117,8 @@ func printEndpointTable(endpoints []corev1.Endpoint, orgName string) error {
 	for _, endpoint := range endpoints {
 		age := util.FormatAge(endpoint.CreationTimestamp.Time)
 		visibility := ""
-		if endpoint.Spec.NetworkVisibilities.External.Enable {
-			visibility = "External"
+		if endpoint.Spec.NetworkVisibilities.Public.Enable {
+			visibility = "Public"
 		}
 		if endpoint.Spec.NetworkVisibilities.Organization.Enable {
 			if visibility != "" {
