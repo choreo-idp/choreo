@@ -16,7 +16,7 @@
  * under the License.
  */
 
-package build
+package argo
 
 import (
 	"encoding/base64"
@@ -27,42 +27,44 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	choreov1 "github.com/choreo-idp/choreo/api/v1"
-	argo "github.com/choreo-idp/choreo/internal/dataplane/kubernetes/types/argoproj.io/workflow/v1alpha1"
+	"github.com/choreo-idp/choreo/internal/controller/build/common"
+	"github.com/choreo-idp/choreo/internal/controller/build/integrations/kubernetes"
+	argoproj "github.com/choreo-idp/choreo/internal/dataplane/kubernetes/types/argoproj.io/workflow/v1alpha1"
 	"github.com/choreo-idp/choreo/internal/ptr"
 )
 
-func makeArgoWorkflow(build *choreov1.Build, repo string, buildNamespace string) *argo.Workflow {
-	workflow := argo.Workflow{
+func makeArgoWorkflow(buildCtx *common.BuildContext) *argoproj.Workflow {
+	workflow := argoproj.Workflow{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      build.ObjectMeta.Name,
-			Namespace: buildNamespace,
+			Name:      buildCtx.Build.ObjectMeta.Name,
+			Namespace: kubernetes.MakeNamespaceName(buildCtx),
 		},
-		Spec: makeWorkflowSpec(build, repo),
+		Spec: makeWorkflowSpec(buildCtx.Build, buildCtx.Component.Spec.Source.GitRepository.URL),
 	}
 	return &workflow
 }
 
-func makeWorkflowSpec(build *choreov1.Build, repo string) argo.WorkflowSpec {
+func makeWorkflowSpec(buildObj *choreov1.Build, repo string) argoproj.WorkflowSpec {
 	hostPathType := corev1.HostPathDirectoryOrCreate
-	return argo.WorkflowSpec{
-		ServiceAccountName: "argo-workflow-sa",
+	return argoproj.WorkflowSpec{
+		ServiceAccountName: makeServiceAccountName(),
 		Entrypoint:         "build-workflow",
-		Templates: []argo.Template{
+		Templates: []argoproj.Template{
 			{
 				Name: "build-workflow",
-				Steps: []argo.ParallelSteps{
+				Steps: []argoproj.ParallelSteps{
 					{
-						Steps: []argo.WorkflowStep{
-							{Name: string(CloneStep), Template: string(CloneStep)},
+						Steps: []argoproj.WorkflowStep{
+							{Name: string(common.CloneStep), Template: string(common.CloneStep)},
 						},
 					},
 					{
-						Steps: []argo.WorkflowStep{
+						Steps: []argoproj.WorkflowStep{
 							{
-								Name:     string(BuildStep),
-								Template: string(BuildStep),
-								Arguments: argo.Arguments{
-									Parameters: []argo.Parameter{
+								Name:     string(common.BuildStep),
+								Template: string(common.BuildStep),
+								Arguments: argoproj.Arguments{
+									Parameters: []argoproj.Parameter{
 										{
 											Name:  "git-revision",
 											Value: ptr.String("{{steps.clone-step.outputs.parameters.git-revision}}"),
@@ -73,12 +75,12 @@ func makeWorkflowSpec(build *choreov1.Build, repo string) argo.WorkflowSpec {
 						},
 					},
 					{
-						Steps: []argo.WorkflowStep{
+						Steps: []argoproj.WorkflowStep{
 							{
-								Name:     string(PushStep),
-								Template: string(PushStep),
-								Arguments: argo.Arguments{
-									Parameters: []argo.Parameter{
+								Name:     string(common.PushStep),
+								Template: string(common.PushStep),
+								Arguments: argoproj.Arguments{
+									Parameters: []argoproj.Parameter{
 										{
 											Name:  "git-revision",
 											Value: ptr.String("{{steps.clone-step.outputs.parameters.git-revision}}"),
@@ -90,9 +92,9 @@ func makeWorkflowSpec(build *choreov1.Build, repo string) argo.WorkflowSpec {
 					},
 				},
 			},
-			makeCloneStep(build, repo),
-			makeBuildStep(build),
-			makePushStep(build),
+			makeCloneStep(buildObj, repo),
+			makeBuildStep(buildObj),
+			makePushStep(buildObj),
 		},
 		VolumeClaimTemplates: makePersistentVolumeClaim(),
 		Affinity:             makeNodeAffinity(),
@@ -107,29 +109,29 @@ func makeWorkflowSpec(build *choreov1.Build, repo string) argo.WorkflowSpec {
 				},
 			},
 		},
-		TTLStrategy: &argo.TTLStrategy{
+		TTLStrategy: &argoproj.TTLStrategy{
 			SecondsAfterFailure: ptr.Int32(3600),
 			SecondsAfterSuccess: ptr.Int32(3600),
 		},
 	}
 }
 
-func makeCloneStep(build *choreov1.Build, repo string) argo.Template {
+func makeCloneStep(buildObj *choreov1.Build, repo string) argoproj.Template {
 	branch := ""
 	gitRevision := ""
-	if build.Spec.Branch != "" {
-		branch = build.Spec.Branch
-	} else if build.Spec.GitRevision != "" {
-		gitRevision = build.Spec.GitRevision[:8]
+	if buildObj.Spec.Branch != "" {
+		branch = buildObj.Spec.Branch
+	} else if buildObj.Spec.GitRevision != "" {
+		gitRevision = buildObj.Spec.GitRevision[:8]
 	} else {
 		branch = "main"
 	}
-	return argo.Template{
-		Name: string(CloneStep),
-		Metadata: argo.Metadata{
+	return argoproj.Template{
+		Name: string(common.CloneStep),
+		Metadata: argoproj.Metadata{
 			Labels: map[string]string{
-				"step":     string(CloneStep),
-				"workflow": build.ObjectMeta.Name,
+				"step":     string(common.CloneStep),
+				"workflow": buildObj.ObjectMeta.Name,
 			},
 		},
 		Container: &corev1.Container{
@@ -140,11 +142,11 @@ func makeCloneStep(build *choreov1.Build, repo string) argo.Template {
 				{Name: "workspace", MountPath: "/mnt/vol"},
 			},
 		},
-		Outputs: argo.Outputs{
-			Parameters: []argo.Parameter{
+		Outputs: argoproj.Outputs{
+			Parameters: []argoproj.Parameter{
 				{
 					Name: "git-revision",
-					ValueFrom: &argo.ValueFrom{
+					ValueFrom: &argoproj.ValueFrom{
 						Path: "/tmp/git-revision.txt",
 					},
 				},
@@ -153,20 +155,20 @@ func makeCloneStep(build *choreov1.Build, repo string) argo.Template {
 	}
 }
 
-func makeBuildStep(build *choreov1.Build) argo.Template {
-	return argo.Template{
-		Name: string(BuildStep),
-		Inputs: argo.Inputs{
-			Parameters: []argo.Parameter{
+func makeBuildStep(buildObj *choreov1.Build) argoproj.Template {
+	return argoproj.Template{
+		Name: string(common.BuildStep),
+		Inputs: argoproj.Inputs{
+			Parameters: []argoproj.Parameter{
 				{
 					Name: "git-revision",
 				},
 			},
 		},
-		Metadata: argo.Metadata{
+		Metadata: argoproj.Metadata{
 			Labels: map[string]string{
-				"step":     string(BuildStep),
-				"workflow": build.ObjectMeta.Name,
+				"step":     string(common.BuildStep),
+				"workflow": buildObj.ObjectMeta.Name,
 			},
 		},
 		Container: &corev1.Container{
@@ -175,7 +177,7 @@ func makeBuildStep(build *choreov1.Build) argo.Template {
 				Privileged: ptr.Bool(true),
 			},
 			Command: []string{"sh", "-c"},
-			Args:    generateBuildArgs(build, constructImageNameWithTag(build)),
+			Args:    generateBuildArgs(buildObj, ConstructImageNameWithTag(buildObj)),
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/mnt/vol"},
 				{Name: "podman-cache", MountPath: "/shared/podman/cache"},
@@ -184,20 +186,20 @@ func makeBuildStep(build *choreov1.Build) argo.Template {
 	}
 }
 
-func makePushStep(build *choreov1.Build) argo.Template {
-	return argo.Template{
-		Name: string(PushStep),
-		Inputs: argo.Inputs{
-			Parameters: []argo.Parameter{
+func makePushStep(buildObj *choreov1.Build) argoproj.Template {
+	return argoproj.Template{
+		Name: string(common.PushStep),
+		Inputs: argoproj.Inputs{
+			Parameters: []argoproj.Parameter{
 				{
 					Name: "git-revision",
 				},
 			},
 		},
-		Metadata: argo.Metadata{
+		Metadata: argoproj.Metadata{
 			Labels: map[string]string{
-				"step":     string(PushStep),
-				"workflow": build.ObjectMeta.Name,
+				"step":     string(common.PushStep),
+				"workflow": buildObj.ObjectMeta.Name,
 			},
 		},
 		Container: &corev1.Container{
@@ -207,17 +209,17 @@ func makePushStep(build *choreov1.Build) argo.Template {
 			},
 			Command: []string{"sh", "-c"},
 			Args: []string{
-				generatePushImageScript(constructImageNameWithTag(build)),
+				generatePushImageScript(ConstructImageNameWithTag(buildObj)),
 			},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/mnt/vol"},
 			},
 		},
-		Outputs: argo.Outputs{
-			Parameters: []argo.Parameter{
+		Outputs: argoproj.Outputs{
+			Parameters: []argoproj.Parameter{
 				{
 					Name: "image",
-					ValueFrom: &argo.ValueFrom{
+					ValueFrom: &argoproj.ValueFrom{
 						Path: "/tmp/image.txt",
 					},
 				},
@@ -267,35 +269,35 @@ func makePersistentVolumeClaim() []corev1.PersistentVolumeClaim {
 	}
 }
 
-func getDockerContext(build *choreov1.Build) string {
-	if build.Spec.BuildConfiguration.Docker.Context != "" {
-		return build.Spec.BuildConfiguration.Docker.Context
+func getDockerContext(buildObj *choreov1.Build) string {
+	if buildObj.Spec.BuildConfiguration.Docker.Context != "" {
+		return buildObj.Spec.BuildConfiguration.Docker.Context
 	}
-	return build.Spec.Path
+	return buildObj.Spec.Path
 }
 
-func getDockerfilePath(build *choreov1.Build) string {
-	if build.Spec.BuildConfiguration.Docker.DockerfilePath != "" {
-		return build.Spec.BuildConfiguration.Docker.DockerfilePath
+func getDockerfilePath(buildObj *choreov1.Build) string {
+	if buildObj.Spec.BuildConfiguration.Docker.DockerfilePath != "" {
+		return buildObj.Spec.BuildConfiguration.Docker.DockerfilePath
 	}
 	return "Dockerfile"
 }
 
-func getLanguageVersion(build *choreov1.Build) string {
-	if build.Spec.BuildConfiguration.Buildpack.Version == "" {
+func getLanguageVersion(buildObj *choreov1.Build) string {
+	if buildObj.Spec.BuildConfiguration.Buildpack.Version == "" {
 		return ""
 	}
-	if build.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackGo {
-		return fmt.Sprintf("--env GOOGLE_GO_VERSION=%q", build.Spec.BuildConfiguration.Buildpack.Version)
-	} else if build.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackNodeJS {
-		return fmt.Sprintf("--env GOOGLE_NODEJS_VERSION=%s", build.Spec.BuildConfiguration.Buildpack.Version)
-	} else if build.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackPython {
-		return fmt.Sprintf("--env GOOGLE_PYTHON_VERSION=%q", build.Spec.BuildConfiguration.Buildpack.Version)
-	} else if build.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackPHP {
-		return fmt.Sprintf("--env GOOGLE_COMPOSER_VERSION=%q", build.Spec.BuildConfiguration.Buildpack.Version)
+	if buildObj.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackGo {
+		return fmt.Sprintf("--env GOOGLE_GO_VERSION=%q", buildObj.Spec.BuildConfiguration.Buildpack.Version)
+	} else if buildObj.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackNodeJS {
+		return fmt.Sprintf("--env GOOGLE_NODEJS_VERSION=%s", buildObj.Spec.BuildConfiguration.Buildpack.Version)
+	} else if buildObj.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackPython {
+		return fmt.Sprintf("--env GOOGLE_PYTHON_VERSION=%q", buildObj.Spec.BuildConfiguration.Buildpack.Version)
+	} else if buildObj.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackPHP {
+		return fmt.Sprintf("--env GOOGLE_COMPOSER_VERSION=%q", buildObj.Spec.BuildConfiguration.Buildpack.Version)
 	}
 	// BuildpackRuby and BuildpackJava
-	return fmt.Sprintf("--env GOOGLE_RUNTIME_VERSION=%s", build.Spec.BuildConfiguration.Buildpack.Version)
+	return fmt.Sprintf("--env GOOGLE_RUNTIME_VERSION=%s", buildObj.Spec.BuildConfiguration.Buildpack.Version)
 }
 
 func generateCloneArgs(repo string, branch string, gitRevision string) []string {
@@ -319,7 +321,7 @@ echo -n "%s" > /tmp/git-revision.txt`, repo, gitRevision, gitRevision, gitRevisi
 	}
 }
 
-func generateBuildArgs(build *choreov1.Build, imageName string) []string {
+func generateBuildArgs(buildObj *choreov1.Build, imageName string) []string {
 	baseScript := `set -e
 
 mkdir -p /etc/containers
@@ -334,16 +336,16 @@ EOF`
 
 	var buildScript string
 
-	if build.Spec.BuildConfiguration.Buildpack != nil {
-		if build.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackReact {
-			buildScript = makeReactBuildScript(build.Spec.BuildConfiguration.Buildpack.Version, build.Spec.Path, imageName)
-		} else if build.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackBallerina {
-			buildScript = makeBuildpackBuildScript(build, imageName, true)
+	if buildObj.Spec.BuildConfiguration.Buildpack != nil {
+		if buildObj.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackReact {
+			buildScript = makeReactBuildScript(buildObj.Spec.BuildConfiguration.Buildpack.Version, buildObj.Spec.Path, imageName)
+		} else if buildObj.Spec.BuildConfiguration.Buildpack.Name == choreov1.BuildpackBallerina {
+			buildScript = makeBuildpackBuildScript(buildObj, imageName, true)
 		} else {
-			buildScript = makeBuildpackBuildScript(build, imageName, false)
+			buildScript = makeBuildpackBuildScript(buildObj, imageName, false)
 		}
 	} else {
-		buildScript = makeDockerfileBuildScript(build, imageName)
+		buildScript = makeDockerfileBuildScript(buildObj, imageName)
 	}
 
 	return []string{baseScript + buildScript}
@@ -396,16 +398,16 @@ podman save -o /mnt/vol/app-image.tar %s`,
 	)
 }
 
-func makeBuildpackBuildScript(build *choreov1.Build, imageName string, isBallerina bool) string {
+func makeBuildpackBuildScript(buildObj *choreov1.Build, imageName string, isBallerina bool) string {
 	baseScript := `
 podman system service --time=0 &
 until podman info --format '{{.Host.RemoteSocket.Exists}}' 2>/dev/null | grep -q "true"; do
   sleep 1
 done`
 	if isBallerina {
-		return baseScript + makeBallerinaBuildScript(imageName, build.Spec.Path)
+		return baseScript + makeBallerinaBuildScript(imageName, buildObj.Spec.Path)
 	}
-	return baseScript + makeGoogleBuildpackBuildScript(imageName, build)
+	return baseScript + makeGoogleBuildpackBuildScript(imageName, buildObj)
 }
 
 func makeBuilderCacheScript(image, cachePath string) string {
@@ -433,7 +435,7 @@ podman save -o /mnt/vol/app-image.tar %s-{{inputs.parameters.git-revision}}`,
 		imageName, path, imageName)
 }
 
-func makeGoogleBuildpackBuildScript(imageName string, build *choreov1.Build) string {
+func makeGoogleBuildpackBuildScript(imageName string, buildObj *choreov1.Build) string {
 	return fmt.Sprintf(`
 %s
 
@@ -445,7 +447,7 @@ func makeGoogleBuildpackBuildScript(imageName string, build *choreov1.Build) str
 podman save -o /mnt/vol/app-image.tar %s-{{inputs.parameters.git-revision}}`,
 		makeBuilderCacheScript("gcr.io/buildpacks/builder:google-22", "/shared/podman/cache/google-builder.tar"),
 		makeBuilderCacheScript("gcr.io/buildpacks/google-22/run:latest", "/shared/podman/cache/google-run.tar"),
-		imageName, build.Spec.Path, getLanguageVersion(build), imageName)
+		imageName, buildObj.Spec.Path, getLanguageVersion(buildObj), imageName)
 }
 
 func getDockerfileContent(nodeVersion string) string {
