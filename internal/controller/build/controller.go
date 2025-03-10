@@ -710,6 +710,25 @@ func (r *Reconciler) addComponentSpecificConfigs(ctx context.Context, logger log
 	}
 }
 
+func extractRepositoryInfo(repoURL string) (string, string, error) {
+	if repoURL == "" {
+		return "", "", fmt.Errorf("repository URL is empty")
+	}
+	if strings.Split(repoURL, "/")[0] != "https:" {
+		return "", "", fmt.Errorf("invalid repository URL")
+	}
+	urlSegments := strings.Split(repoURL, "/")
+	start := 0
+	len := len(urlSegments)
+	if len > 2 {
+		start = len - 2
+	}
+	owner := urlSegments[start]
+	repo := urlSegments[start+1]
+	return owner, repo, nil
+}
+
+// Update getEndpointConfigs to use the new functions
 func (r *Reconciler) getEndpointConfigs(ctx context.Context, build *choreov1.Build) ([]choreov1.EndpointTemplate, error) {
 	component, err := controller.GetComponent(ctx, r.Client, build)
 	if err != nil {
@@ -739,45 +758,57 @@ func (r *Reconciler) getEndpointConfigs(ctx context.Context, build *choreov1.Bui
 		return nil, fmt.Errorf("failed to get content of component.yaml from the repository  buildName:%s;owner:%s;repo:%s;%w", build.Name, owner, repositoryName, err)
 	}
 	config := descriptor.Config{}
-	err = yaml.Unmarshal([]byte(componentYamlContent), &config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal component.yaml from the repository buildName:%s;owner:%s;repo:%s;%w", build.Name, owner, repositoryName, err)
+	if err = yaml.Unmarshal([]byte(componentYamlContent), &config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal component.yaml from the repository buildName:%s;owner:%s;repo:%s;%w",
+			build.Name, owner, repositoryName, err)
 	}
 
-	endpointTemplates := []choreov1.EndpointTemplate{}
-	for _, endpoint := range config.Endpoints {
-		basePath := endpoint.Service.BasePath
-		if basePath == "" {
-			basePath = "/"
-		}
-		endpointTemplates = append(endpointTemplates, choreov1.EndpointTemplate{
-			Spec: choreov1.EndpointSpec{
-				Type:                endpoint.Type,
-				NetworkVisibilities: endpoint.NetworkVisibilities,
-				Service: choreov1.EndpointServiceSpec{
-					Port:     endpoint.Service.Port,
-					BasePath: basePath,
-				},
-			},
-		})
-	}
-	return endpointTemplates, nil
+	return parseEndpointTemplates(&config), nil
 }
 
-func extractRepositoryInfo(repoURL string) (string, string, error) {
-	if repoURL == "" {
-		return "", "", fmt.Errorf("repository URL is empty")
+func parseEndpointTemplates(config *descriptor.Config) []choreov1.EndpointTemplate {
+	endpointTemplates := make([]choreov1.EndpointTemplate, 0, len(config.Endpoints))
+
+	for _, endpoint := range config.Endpoints {
+		endpointTemplates = append(endpointTemplates, createEndpointTemplate(endpoint))
 	}
-	if strings.Split(repoURL, "/")[0] != "https:" {
-		return "", "", fmt.Errorf("invalid repository URL")
+
+	return endpointTemplates
+}
+
+func createEndpointTemplate(endpoint descriptor.Endpoint) choreov1.EndpointTemplate {
+	return choreov1.EndpointTemplate{
+		Spec: choreov1.EndpointSpec{
+			Type:                endpoint.Type,
+			NetworkVisibilities: parseNetworkVisibilities(endpoint.NetworkVisibilities),
+			Service:             createServiceSpec(endpoint.Service),
+		},
 	}
-	urlSegments := strings.Split(repoURL, "/")
-	start := 0
-	len := len(urlSegments)
-	if len > 2 {
-		start = len - 2
+}
+
+func createServiceSpec(service descriptor.Service) choreov1.EndpointServiceSpec {
+	basePath := service.BasePath
+	if basePath == "" {
+		basePath = "/"
 	}
-	owner := urlSegments[start]
-	repo := urlSegments[start+1]
-	return owner, repo, nil
+
+	return choreov1.EndpointServiceSpec{
+		Port:     service.Port,
+		BasePath: basePath,
+	}
+}
+
+func parseNetworkVisibilities(visibilities []descriptor.NetworkVisibilityLevel) choreov1.NetworkVisibility {
+	nv := choreov1.NetworkVisibility{}
+
+	for _, visibility := range visibilities {
+		switch visibility {
+		case descriptor.NetworkVisibilityLevelOrganization:
+			nv.Organization = choreov1.VisibilityConfig{Enable: true}
+		case descriptor.NetworkVisibilityLevelPublic:
+			nv.Public = choreov1.VisibilityConfig{Enable: true}
+		}
+	}
+
+	return nv
 }
