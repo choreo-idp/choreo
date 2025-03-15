@@ -1,28 +1,27 @@
-# Installing from Scratch with a Kind (Kubernetes in Docker) Cluster
+# Installing from Scratch with a k3d (k3s in Docker) Cluster
 
-In this section, you'll learn how to set up a [kind](https://kind.sigs.k8s.io/) cluster and install Cilium and Choreo from scratch.
+In this section, you'll learn how to set up a [k3d](https://k3d.io/) cluster and install Choreo from scratch.
 
 ## _Prerequisites_
 
-1. Make sure you have installed [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), version v0.25.0+.
+1. Make sure you have installed [k3d](https://k3d.io/stable/), version v5.8+.
 
-    > We use Kind to quickly create a Kubernetes cluster, primarily for testing purposes.
-    
-    To verify the installation:
-    
+   > We use k3d to quickly create a Kubernetes cluster, primarily for testing purposes.
+
+   To verify the installation:
+
     ```shell
-    kind version
+    k3d version
     ```
 2. Make sure you have installed [Helm](https://helm.sh/docs/intro/install/), version v3.15+.
 
-    > We use Helm as the package manager to install the required artifacts into the Kubernetes cluster.
-    
-    To verify the installation:
-    
+   > We use Helm as the package manager to install the required artifacts into the Kubernetes cluster.
+
+   To verify the installation:
+
     ```shell
     helm version
     ```
-
 3. Clone our repository and navigate to the `install` directory.
 
     ```shell
@@ -32,10 +31,10 @@ All set up. Let's go ahead and install Choreo.
 
 ## Installing Choreo
 
-### Step 1 - Create a Kind cluster
+### Step 1 - Create a k3d cluster
 
 ```shell
-kind create cluster --config=kind/kind-config.yaml
+$ k3d cluster create --config k3d/k3d-config.yaml
 ```
 
 ### Step 2 - Install Cilium

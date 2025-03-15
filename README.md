@@ -37,6 +37,8 @@ With Open Source Choreo, we are bringing these capabilities to the open-source c
 
 The easiest way to try Open Source Choreo is by following the **[Quick Start Guide](./docs/quick-start-guide.md)**. It walks you through setting up Choreo using a Dev Container, so you can start experimenting without affecting your local environment.
 
+If you prefer to set up Choreo on your local machine from scratch, check out our **[Installation Guide](./docs/installation-guide.md)**.
+
 For a deeper understanding of Open Source Choreo’s architecture, see **[Choreo Concepts](./docs/choreo-concepts.md)**.
 
 ## Samples
