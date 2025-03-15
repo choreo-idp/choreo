@@ -31,12 +31,13 @@ import (
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwapiv1a2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 
-	choreov1 "github.com/choreo-idp/choreo/api/v1"
+	"github.com/choreo-idp/choreo/internal/controller/endpoint/integrations/kubernetes/visibility"
 	"github.com/choreo-idp/choreo/internal/dataplane"
 )
 
 type SecurityPolicyHandler struct {
-	client client.Client
+	client     client.Client
+	visibility visibility.VisibilityStrategy
 }
 
 var _ dataplane.ResourceHandler[dataplane.EndpointContext] = (*SecurityPolicyHandler)(nil)
@@ -46,20 +47,12 @@ func (h *SecurityPolicyHandler) Name() string {
 }
 
 func (h *SecurityPolicyHandler) IsRequired(ctx *dataplane.EndpointContext) bool {
-	if ctx.Endpoint.Spec.APISettings == nil || ctx.Endpoint.Spec.APISettings.SecuritySchemes == nil {
-		return false
-	}
-	secSchemes := ctx.Endpoint.Spec.APISettings.SecuritySchemes
-	for _, scheme := range secSchemes {
-		return scheme == choreov1.Oauth
-	}
-
-	return false
+	return h.visibility.IsSecurityPolicyRequired(ctx)
 }
 
 func (h *SecurityPolicyHandler) GetCurrentState(ctx context.Context, epCtx *dataplane.EndpointContext) (interface{}, error) {
 	namespace := makeNamespaceName(epCtx)
-	name := makeHTTPRouteName(epCtx)
+	name := makeHTTPRouteName(epCtx, h.visibility.GetGatewayType())
 	out := &egv1a1.SecurityPolicy{}
 	err := h.client.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, out)
 	if apierrors.IsNotFound(err) {
@@ -71,7 +64,7 @@ func (h *SecurityPolicyHandler) GetCurrentState(ctx context.Context, epCtx *data
 }
 
 func (h *SecurityPolicyHandler) Create(ctx context.Context, epCtx *dataplane.EndpointContext) error {
-	securityPolicy := makeSecurityPolicy(epCtx)
+	securityPolicy := MakeSecurityPolicy(epCtx, h.visibility.GetGatewayType())
 	return h.client.Create(ctx, securityPolicy)
 }
 
@@ -80,7 +73,7 @@ func (h *SecurityPolicyHandler) Update(ctx context.Context, epCtx *dataplane.End
 	if !ok {
 		return errors.New("failed to cast current state to SecurityPolicy")
 	}
-	new := makeSecurityPolicy(epCtx)
+	new := MakeSecurityPolicy(epCtx, h.visibility.GetGatewayType())
 	if shouldUpdate(current, new) {
 		new.ResourceVersion = current.ResourceVersion
 		return h.client.Update(ctx, new)
@@ -88,9 +81,10 @@ func (h *SecurityPolicyHandler) Update(ctx context.Context, epCtx *dataplane.End
 	return nil
 }
 
-func NewSecurityPolicyHandler(client client.Client) dataplane.ResourceHandler[dataplane.EndpointContext] {
+func NewSecurityPolicyHandler(client client.Client, visibility visibility.VisibilityStrategy) dataplane.ResourceHandler[dataplane.EndpointContext] {
 	return &SecurityPolicyHandler{
-		client: client,
+		client:     client,
+		visibility: visibility,
 	}
 }
 
@@ -98,18 +92,27 @@ func (h *SecurityPolicyHandler) Delete(ctx context.Context, epCtx *dataplane.End
 	return nil
 }
 
-func makeSecurityPolicy(epCtx *dataplane.EndpointContext) *egv1a1.SecurityPolicy {
+func shouldUpdate(current, new *egv1a1.SecurityPolicy) bool {
+	// Compare the labels
+	if !cmp.Equal(extractManagedLabels(current.Labels), extractManagedLabels(new.Labels)) {
+		return true
+	}
+
+	return !cmp.Equal(current.Spec, new.Spec, cmpopts.EquateEmpty())
+}
+
+func MakeSecurityPolicy(epCtx *dataplane.EndpointContext, gwType visibility.GatewayType) *egv1a1.SecurityPolicy {
 	return &egv1a1.SecurityPolicy{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      makeHTTPRouteName(epCtx),
+			Name:      makeHTTPRouteName(epCtx, gwType),
 			Namespace: makeNamespaceName(epCtx),
 			Labels:    makeWorkloadLabels(epCtx),
 		},
-		Spec: makeSecurityPolicySpec(epCtx),
+		Spec: MakeSecurityPolicySpec(epCtx, gwType),
 	}
 }
 
-func makeSecurityPolicySpec(epCtx *dataplane.EndpointContext) egv1a1.SecurityPolicySpec {
+func MakeSecurityPolicySpec(epCtx *dataplane.EndpointContext, gwType visibility.GatewayType) egv1a1.SecurityPolicySpec {
 	return egv1a1.SecurityPolicySpec{
 		JWT: &egv1a1.JWT{
 			Providers: []egv1a1.JWTProvider{
@@ -127,19 +130,10 @@ func makeSecurityPolicySpec(epCtx *dataplane.EndpointContext) egv1a1.SecurityPol
 					LocalPolicyTargetReference: gwapiv1a2.LocalPolicyTargetReference{
 						Group: gwapiv1.GroupName,
 						Kind:  gwapiv1.Kind("HTTPRoute"),
-						Name:  gwapiv1a2.ObjectName(makeHTTPRouteName(epCtx)),
+						Name:  gwapiv1a2.ObjectName(makeHTTPRouteName(epCtx, gwType)),
 					},
 				},
 			},
 		},
 	}
-}
-
-func shouldUpdate(current, new *egv1a1.SecurityPolicy) bool {
-	// Compare the labels
-	if !cmp.Equal(extractManagedLabels(current.Labels), extractManagedLabels(new.Labels)) {
-		return true
-	}
-
-	return !cmp.Equal(current.Spec, new.Spec, cmpopts.EquateEmpty())
 }

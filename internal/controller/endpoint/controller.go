@@ -28,11 +28,15 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	choreov1 "github.com/choreo-idp/choreo/api/v1"
 	"github.com/choreo-idp/choreo/internal/controller"
 	"github.com/choreo-idp/choreo/internal/controller/endpoint/integrations/kubernetes"
+	k8sintegrations "github.com/choreo-idp/choreo/internal/controller/endpoint/integrations/kubernetes"
+	"github.com/choreo-idp/choreo/internal/controller/endpoint/integrations/kubernetes/visibility"
 	"github.com/choreo-idp/choreo/internal/dataplane"
 )
 
@@ -100,13 +104,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 	meta.SetStatusCondition(&ep.Status.Conditions, EndpointReadyCondition(ep.Generation))
-	ep.Status.Address = kubernetes.MakeAddress(
-		epCtx.Project.Name,
-		epCtx.Component.Name,
-		epCtx.Environment.Name,
-		epCtx.Component.Spec.Type,
-		epCtx.Endpoint.Spec.Service.BasePath,
-	)
+	ep.Status.Address = kubernetes.MakeAddress(epCtx, visibility.GatewayExternal)
 	if ep.Status.Address != old.Status.Address ||
 		controller.NeedConditionUpdate(old.Status.Conditions, ep.Status.Conditions) {
 		if err := r.Status().Update(ctx, ep); err != nil {
@@ -154,8 +152,12 @@ func (r *Reconciler) makeEndpointContext(ctx context.Context, ep *choreov1.Endpo
 	if err != nil {
 		return nil, fmt.Errorf("cannot retrieve the deployment: %w", err)
 	}
-
+	dp, err := controller.GetDataplane(ctx, r.Client, ep)
+	if err != nil {
+		return nil, fmt.Errorf("cannot retrieve the dataplane: %w", err)
+	}
 	return &dataplane.EndpointContext{
+		DataPlane:       dp,
 		Project:         project,
 		Component:       component,
 		DeploymentTrack: deploymentTrack,
@@ -168,8 +170,10 @@ func (r *Reconciler) makeEndpointContext(ctx context.Context, ep *choreov1.Endpo
 func (r *Reconciler) makeExternalResourceHandlers() []dataplane.ResourceHandler[dataplane.EndpointContext] {
 	// Define the resource handlers for the external resources
 	resourceHandlers := []dataplane.ResourceHandler[dataplane.EndpointContext]{
-		kubernetes.NewHTTPRouteHandler(r.Client),
-		kubernetes.NewSecurityPolicyHandler(r.Client),
+		k8sintegrations.NewHTTPRouteHandler(r.Client, visibility.NewPublicVisibilityStrategy()),
+		k8sintegrations.NewHTTPRouteHandler(r.Client, visibility.NewOrganizationVisibilityStrategy()),
+		k8sintegrations.NewSecurityPolicyHandler(r.Client, visibility.NewPublicVisibilityStrategy()),
+		k8sintegrations.NewSecurityPolicyHandler(r.Client, visibility.NewOrganizationVisibilityStrategy()),
 	}
 
 	return resourceHandlers
@@ -227,8 +231,22 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.recorder = mgr.GetEventRecorderFor("endpoint-controller")
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	if err := r.setupDataPlaneRefIndex(context.Background(), mgr); err != nil {
+		return fmt.Errorf("failed to setup dataPlane reference index: %w", err)
+	}
+
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&choreov1.Endpoint{}).
 		Named("endpoint").
-		Complete(r)
+		WithEventFilter(predicate.GenerationChangedPredicate{}). // Only reconcile on spec changes
+		Watches(
+			&choreov1.DataPlane{},
+			handler.EnqueueRequestsFromMapFunc(r.listEndpointsForDataplane),
+		).
+		Watches(
+			&choreov1.Environment{},
+			handler.EnqueueRequestsFromMapFunc(r.listEndpointsForEnvironment),
+		)
+
+	return builder.Complete(r)
 }

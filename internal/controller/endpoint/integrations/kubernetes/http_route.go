@@ -31,26 +31,22 @@ import (
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	choreov1 "github.com/choreo-idp/choreo/api/v1"
+	"github.com/choreo-idp/choreo/internal/controller/endpoint/integrations/kubernetes/visibility"
 	"github.com/choreo-idp/choreo/internal/dataplane"
-	dpkubernetes "github.com/choreo-idp/choreo/internal/dataplane/kubernetes"
 	"github.com/choreo-idp/choreo/internal/ptr"
 )
 
-// Gateway Types
-const (
-	gatewayExternal = "gateway-external"
-	gatewayInternal = "gateway-internal"
-)
-
 type httpRouteHandler struct {
-	client client.Client
+	client     client.Client
+	visibility visibility.VisibilityStrategy
 }
 
 var _ dataplane.ResourceHandler[dataplane.EndpointContext] = (*httpRouteHandler)(nil)
 
-func NewHTTPRouteHandler(kubernetesClient client.Client) dataplane.ResourceHandler[dataplane.EndpointContext] {
+func NewHTTPRouteHandler(kubernetesClient client.Client, visibility visibility.VisibilityStrategy) dataplane.ResourceHandler[dataplane.EndpointContext] {
 	return &httpRouteHandler{
-		client: kubernetesClient,
+		client:     kubernetesClient,
+		visibility: visibility,
 	}
 }
 
@@ -59,14 +55,12 @@ func (h *httpRouteHandler) Name() string {
 }
 
 func (h *httpRouteHandler) IsRequired(epCtx *dataplane.EndpointContext) bool {
-	// HTTPRoutes are required for Web Applications
-	return epCtx.Component.Spec.Type == choreov1.ComponentTypeWebApplication ||
-		epCtx.Component.Spec.Type == choreov1.ComponentTypeService
+	return h.visibility.IsHTTPRouteRequired(epCtx)
 }
 
 func (h *httpRouteHandler) GetCurrentState(ctx context.Context, epCtx *dataplane.EndpointContext) (interface{}, error) {
 	namespace := makeNamespaceName(epCtx)
-	name := makeHTTPRouteName(epCtx)
+	name := makeHTTPRouteName(epCtx, h.visibility.GetGatewayType())
 	out := &gwapiv1.HTTPRoute{}
 	err := h.client.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, out)
 	if apierrors.IsNotFound(err) {
@@ -78,7 +72,7 @@ func (h *httpRouteHandler) GetCurrentState(ctx context.Context, epCtx *dataplane
 }
 
 func (h *httpRouteHandler) Create(ctx context.Context, epCtx *dataplane.EndpointContext) error {
-	httpRoute := makeHTTPRoute(epCtx)
+	httpRoute := MakeHTTPRoute(epCtx, h.visibility.GetGatewayType())
 	return h.client.Create(ctx, httpRoute)
 }
 
@@ -88,7 +82,7 @@ func (h *httpRouteHandler) Update(ctx context.Context, epCtx *dataplane.Endpoint
 		return errors.New("failed to cast current state to HTTPRoute")
 	}
 
-	newHTTPRoute := makeHTTPRoute(epCtx)
+	newHTTPRoute := MakeHTTPRoute(epCtx, h.visibility.GetGatewayType())
 
 	if h.shouldUpdate(currentHTTPRoute, newHTTPRoute) {
 		newHTTPRoute.ResourceVersion = currentHTTPRoute.ResourceVersion
@@ -99,7 +93,7 @@ func (h *httpRouteHandler) Update(ctx context.Context, epCtx *dataplane.Endpoint
 }
 
 func (h *httpRouteHandler) Delete(ctx context.Context, epCtx *dataplane.EndpointContext) error {
-	httpRoute := makeHTTPRoute(epCtx)
+	httpRoute := MakeHTTPRoute(epCtx, h.visibility.GetGatewayType())
 	err := h.client.Delete(ctx, httpRoute)
 	if apierrors.IsNotFound(err) {
 		return nil
@@ -116,28 +110,23 @@ func (h *httpRouteHandler) shouldUpdate(current, new *gwapiv1.HTTPRoute) bool {
 	return !cmp.Equal(current.Spec, new.Spec, cmpopts.EquateEmpty())
 }
 
-func makeHTTPRoute(epCtx *dataplane.EndpointContext) *gwapiv1.HTTPRoute {
+func MakeHTTPRoute(epCtx *dataplane.EndpointContext, gwType visibility.GatewayType) *gwapiv1.HTTPRoute {
 	return &gwapiv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      makeHTTPRouteName(epCtx),
+			Name:      makeHTTPRouteName(epCtx, gwType),
 			Namespace: makeNamespaceName(epCtx),
 			Labels:    makeWorkloadLabels(epCtx),
 		},
-		Spec: makeHTTPRouteSpec(epCtx),
+		Spec: makeHTTPRouteSpec(epCtx, gwType),
 	}
 }
 
-func makeHTTPRouteName(epCtx *dataplane.EndpointContext) string {
-	componentName := epCtx.Component.Name
-	endpointName := epCtx.Endpoint.Name
-	return dpkubernetes.GenerateK8sName(componentName, endpointName)
-}
-
-func makeHTTPRouteSpec(epCtx *dataplane.EndpointContext) gwapiv1.HTTPRouteSpec {
+func makeHTTPRouteSpec(epCtx *dataplane.EndpointContext, gwType visibility.GatewayType) gwapiv1.HTTPRouteSpec {
+	updatedEp := visibility.OverrideAPISettings(epCtx, gwType)
 	pathType := gwapiv1.PathMatchPathPrefix
-	hostname := makeHostname(epCtx.Component.Name, epCtx.Environment.Name, epCtx.Component.Spec.Type)
-	port := gwapiv1.PortNumber(epCtx.Endpoint.Spec.Service.Port)
-	prefix := makePathPrefix(epCtx.Project.Name, epCtx.Component.Name, epCtx.Component.Spec.Type)
+	hostname := makeHostname(epCtx, gwType)
+	port := gwapiv1.PortNumber(updatedEp.Spec.Service.Port)
+	prefix := makePathPrefix(epCtx)
 	basePath := epCtx.Endpoint.Spec.Service.BasePath
 	endpointPath := basePath
 	if epCtx.Component.Spec.Type == choreov1.ComponentTypeService {
@@ -148,7 +137,7 @@ func makeHTTPRouteSpec(epCtx *dataplane.EndpointContext) gwapiv1.HTTPRouteSpec {
 		CommonRouteSpec: gwapiv1.CommonRouteSpec{
 			ParentRefs: []gwapiv1.ParentReference{
 				{
-					Name:      gwapiv1.ObjectName(gatewayExternal),
+					Name:      gwapiv1.ObjectName(gwType),
 					Namespace: (*gwapiv1.Namespace)(ptr.String("choreo-system")), // Change NS based on where envoy gateway is deployed
 				},
 			},

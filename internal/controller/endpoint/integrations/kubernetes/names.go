@@ -20,11 +20,12 @@ package kubernetes
 
 import (
 	"github.com/choreo-idp/choreo/internal/controller"
+	"github.com/choreo-idp/choreo/internal/controller/endpoint/integrations/kubernetes/visibility"
 	"github.com/choreo-idp/choreo/internal/dataplane"
 	dpkubernetes "github.com/choreo-idp/choreo/internal/dataplane/kubernetes"
 )
 
-// NamespaceName has the format dp-<organization-name>-<project-name>-<environment-name>-<hash>
+// makeNamespaceName has the format dp-<organization-name>-<project-name>-<environment-name>-<hash>
 func makeNamespaceName(epCtx *dataplane.EndpointContext) string {
 	organizationName := controller.GetOrganizationName(epCtx.Project)
 	projectName := controller.GetName(epCtx.Project)
@@ -32,8 +33,15 @@ func makeNamespaceName(epCtx *dataplane.EndpointContext) string {
 	return dpkubernetes.GenerateK8sNameWithLengthLimit(dpkubernetes.MaxNamespaceNameLength, "dp", organizationName, projectName, environmentName)
 }
 
-func makeServiceName(deployCtx *dataplane.EndpointContext) string {
-	componentName := deployCtx.Component.Name
-	deploymentTrackName := deployCtx.DeploymentTrack.Name
+// makeServiceName has the format dp-<component-name>-<deployment-track-name>-<hash>
+func makeServiceName(epCtx *dataplane.EndpointContext) string {
+	componentName := epCtx.Component.Name
+	deploymentTrackName := epCtx.DeploymentTrack.Name
 	return dpkubernetes.GenerateK8sNameWithLengthLimit(dpkubernetes.MaxServiceNameLength, componentName, deploymentTrackName)
+}
+
+// makeHTTPRouteName has the format dp-<gateway-name>-<endpoint-name>-<hash>
+func makeHTTPRouteName(epCtx *dataplane.EndpointContext, gwType visibility.GatewayType) string {
+	endpointName := epCtx.Endpoint.Name
+	return dpkubernetes.GenerateK8sName(string(gwType), endpointName)
 }
