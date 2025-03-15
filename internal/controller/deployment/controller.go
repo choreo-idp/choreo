@@ -146,6 +146,11 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return fmt.Errorf("failed to setup deployment artifact reference index: %w", err)
 	}
 
+	// Set up the index for the configuration group reference via deployment artifacts
+	if err := r.setupConfigurationGroupRefIndex(context.Background(), mgr); err != nil {
+		return fmt.Errorf("failed to setup deployment artifact reference index: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&choreov1.Deployment{}).
 		Named("deployment").
@@ -153,6 +158,11 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&choreov1.DeployableArtifact{},
 			handler.EnqueueRequestsFromMapFunc(r.listDeploymentsForDeployableArtifact),
+		).
+		// Watch for ConfigurationGroup changes to reconcile the deployments
+		Watches(
+			&choreov1.ConfigurationGroup{},
+			handler.EnqueueRequestsFromMapFunc(r.listDeploymentsForConfigurationGroup),
 		).
 		Owns(&choreov1.Endpoint{}).
 		Complete(r)
@@ -168,6 +178,7 @@ func (r *Reconciler) makeExternalResourceHandlers() []dataplane.ResourceHandler[
 	handlers = append(handlers, k8sintegrations.NewNamespaceHandler(r.Client))
 	handlers = append(handlers, k8sintegrations.NewCiliumNetworkPolicyHandler(r.Client))
 	handlers = append(handlers, k8sintegrations.NewConfigMapHandler(r.Client))
+	handlers = append(handlers, k8sintegrations.NewSecretProviderClassHandler(r.Client))
 	handlers = append(handlers, k8sintegrations.NewCronJobHandler(r.Client))
 	handlers = append(handlers, k8sintegrations.NewDeploymentHandler(r.Client))
 	handlers = append(handlers, k8sintegrations.NewServiceHandler(r.Client))
