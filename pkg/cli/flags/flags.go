@@ -289,6 +289,11 @@ var (
 		Name:  "environment-order",
 		Usage: messages.FlagEnvironmentOrderDesc,
 	}
+
+	DeploymentPipeline = Flag{
+		Name:  "deployment-pipeline",
+		Usage: messages.FlagDeploymentPipelineDesc,
+	}
 )
 
 // AddFlags adds the specified flags to the given command.
