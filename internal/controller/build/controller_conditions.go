@@ -43,6 +43,10 @@ const (
 	ConditionDeployableArtifactCreated controller.ConditionType = "DeployableArtifactCreated"
 	// ConditionDeploymentApplied represents whether the deployment is created/updated when auto deploy is enabled
 	ConditionDeploymentApplied controller.ConditionType = "DeploymentApplied"
+	// ConditionBuildFinalizing represents the build resource is being deleted
+	ConditionBuildFinalizing controller.ConditionType = "Finalizing"
+	// ConditionDeployableArtifactReferencesRemaining represents the build deletion stucked due to deployable artifact references
+	ConditionDeployableArtifactReferencesRemaining controller.ConditionType = "DeployableArtifactReferencesRemaining"
 )
 
 // Constants for condition reasons
@@ -71,6 +75,9 @@ const (
 
 	ReasonAutoDeploymentFailed  controller.ConditionReason = "DeploymentFailed"
 	ReasonAutoDeploymentApplied controller.ConditionReason = "DeploymentAppliedSuccessfully"
+
+	ReasonBuildFinalizing                  controller.ConditionReason = "BuildBeingDeleted"
+	ReasonDeployableArtifactDeletionFailed controller.ConditionReason = "DeployableArtifactRemain"
 )
 
 func NewWorkflowInitializedCondition(generation int64) metav1.Condition {
@@ -197,4 +204,24 @@ func markStepAsFailed(build *choreov1.Build, conditionType controller.ConditionT
 		failureDescriptors[conditionType].Message,
 		build.Generation,
 	))
+}
+
+func NewBuildFinalizingCondition(generation int64) metav1.Condition {
+	return controller.NewCondition(
+		ConditionBuildFinalizing,
+		metav1.ConditionTrue,
+		ReasonBuildFinalizing,
+		"Build resource is being finalized.",
+		generation,
+	)
+}
+
+func NewArtifactRemainingCondition(generation int64) metav1.Condition {
+	return controller.NewCondition(
+		ConditionDeployableArtifactReferencesRemaining,
+		metav1.ConditionTrue,
+		ReasonDeployableArtifactDeletionFailed,
+		"Deployable artifact resource is remaining.",
+		generation,
+	)
 }
