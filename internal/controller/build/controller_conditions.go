@@ -43,9 +43,9 @@ const (
 	ConditionDeployableArtifactCreated controller.ConditionType = "DeployableArtifactCreated"
 	// ConditionDeploymentApplied represents whether the deployment is created/updated when auto deploy is enabled
 	ConditionDeploymentApplied controller.ConditionType = "DeploymentApplied"
-	// ConditionBuildFinalizing represents the build resource is being deleted
+	// ConditionBuildFinalizing indicates that the build is in the process of being deleted
 	ConditionBuildFinalizing controller.ConditionType = "Finalizing"
-	// ConditionDeployableArtifactReferencesRemaining represents the build deletion stucked due to deployable artifact references
+	// ConditionDeployableArtifactReferencesRemaining indicates that the build deletion is blocked due to existing DeployableArtifact references
 	ConditionDeployableArtifactReferencesRemaining controller.ConditionType = "DeployableArtifactReferencesRemaining"
 )
 
@@ -75,6 +75,8 @@ const (
 
 	ReasonAutoDeploymentFailed  controller.ConditionReason = "DeploymentFailed"
 	ReasonAutoDeploymentApplied controller.ConditionReason = "DeploymentAppliedSuccessfully"
+
+	// Reasons for build finalizing
 
 	ReasonBuildFinalizing                  controller.ConditionReason = "BuildBeingDeleted"
 	ReasonDeployableArtifactDeletionFailed controller.ConditionReason = "DeployableArtifactRemain"
