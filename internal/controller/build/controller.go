@@ -80,11 +80,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
+	oldBuild := build.DeepCopy()
+
+	// Handle the deletion of the build
+	if !build.DeletionTimestamp.IsZero() {
+		logger.Info("Finalizing build")
+		return r.finalize(ctx, oldBuild, build)
+	}
+
+	// Ensure the finalizer is added to the build
+	if finalizerAdded, err := r.ensureFinalizer(ctx, build); err != nil || finalizerAdded {
+		return ctrl.Result{}, err
+	}
+
 	if shouldIgnoreReconcile(build) {
 		return ctrl.Result{}, nil
 	}
-
-	oldBuild := build.DeepCopy()
 
 	// Create a new build context for the build with required hierarchy objects
 	buildCtx, err := r.makeBuildContext(ctx, build)
@@ -166,6 +177,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&choreov1.Build{}).
 		Named("build").
+		Owns(&choreov1.DeployableArtifact{}).
 		Complete(r)
 }
 
@@ -360,6 +372,10 @@ func (r *Reconciler) createDeployableArtifact(ctx context.Context, buildCtx *int
 		resources.AddComponentSpecificConfigs(buildCtx, deployableArtifact, &endpoints)
 	} else {
 		resources.AddComponentSpecificConfigs(buildCtx, deployableArtifact, nil)
+	}
+
+	if err := ctrl.SetControllerReference(buildCtx.Build, deployableArtifact, r.Scheme); err != nil {
+		return true, err
 	}
 
 	if err := r.Client.Create(ctx, deployableArtifact); err != nil && !apierrors.IsAlreadyExists(err) {
