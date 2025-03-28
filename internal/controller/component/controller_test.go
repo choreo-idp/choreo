@@ -251,29 +251,51 @@ var _ = Describe("Component Controller", func() {
 			Expect(component.Spec.Type).To(Equal(apiv1.ComponentTypeService))
 		})
 
+		//
 		By("Deleting the component resource", func() {
 			err := k8sClient.Get(ctx, componentNamespacedName, component)
 			Expect(err).NotTo(HaveOccurred())
+
+			// Delete the component - this marks it for deletion but won't remove it yet due to finalizer
 			Expect(k8sClient.Delete(ctx, component)).To(Succeed())
 		})
 
-		By("Checking the component resource deletion", func() {
-			Eventually(func() error {
-				return k8sClient.Get(ctx, componentNamespacedName, component)
-			}, time.Second*10, time.Millisecond*500).ShouldNot(Succeed())
-		})
-
-		By("Reconciling the component resource after deletion", func() {
-			dpReconciler := &Reconciler{
+		By("Reconciling the component after deletion request", func() {
+			// The finalizer should trigger during reconciliation
+			componentReconciler := &Reconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
 				Recorder: record.NewFakeRecorder(100),
 			}
-			result, err := dpReconciler.Reconcile(ctx, reconcile.Request{
+
+			// Component should exist but be marked for deletion
+			updatedComponent := &apiv1.Component{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, componentNamespacedName, updatedComponent)
+				if err != nil {
+					return false
+				}
+				return !updatedComponent.DeletionTimestamp.IsZero()
+			}, time.Second*10, time.Millisecond*500).Should(BeTrue())
+
+			// Run the finalizer reconciliation
+			_, err := componentReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: componentNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Requeue).To(BeFalse())
+
+			// Run finalizer again to complete deletion
+			_, err = componentReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: componentNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		By("Checking the component resource deletion", func() {
+			// Now the component should be fully deleted
+			Eventually(func() error {
+				return k8sClient.Get(ctx, componentNamespacedName, &apiv1.Component{})
+			}, time.Second*10, time.Millisecond*500).Should(Satisfy(errors.IsNotFound))
 		})
 	})
 
